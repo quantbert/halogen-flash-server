@@ -21,14 +21,14 @@
 # The engine port is deliberately NOT published, because the token protocol has
 # no auth. Only the API is reachable, and it is the only edge.
 #
-# `keep-groups` in group_add is a PODMAN extension, so this file is written for
-# podman-compose. Under docker compose, replace it with
-# `group_add: ["video", "render"]`.
+# Docker Compose deployment for this workstation.
+# The engine and API stay split so the API can restart without reloading the
+# model. The engine downloads missing weights into the writable models volume.
 #
 # Usage:
-#   HALOGEN_MODELS=~/halogen-models podman-compose up -d
-#   podman-compose restart api          # cheap: no model reload
-#   podman-compose logs -f engine       # watch the load, it takes minutes
+#   docker compose up -d
+#   docker compose restart api          # cheap: no model reload
+#   docker compose logs -f engine       # watch the load, it takes minutes
 #
 # BOTH SERVICES MUST RUN THE SAME TAG. The api renders the prompt and the
 # engine runs it, and what one release can do the other may not know how to
@@ -46,6 +46,7 @@ services:
       # Separate netns from the api service, so the engine must listen on all
       # interfaces WITHIN the compose network. It stays unpublished to the host.
       HALOGEN_BIND: 0.0.0.0
+      HALOGEN_DOWNLOAD: peonist-ai/halogen-qwen3.8-flash-next
       # NOTHING ELSE IS SET HERE ON PURPOSE. The image already carries the
       # shipped defaults (1 KV slot, 262,144 context, prompt cache mode 2,
       # prefill chunk 32,768, the quality sidecar, the tuned GEMM plan). A copy
@@ -105,9 +106,8 @@ services:
       # HALOGEN_CACHE_DIR: /cache
       # HALOGEN_CACHE_DISK_GIB: "64"
     volumes:
-      # The directory `hf download` wrote. It holds the checkpoint, the quality
-      # sidecar the engine picks up automatically, and tokenizer/.
-      - ${HALOGEN_MODELS:?set HALOGEN_MODELS to the directory hf download wrote}:/models:ro
+      # Writable so HALOGEN_DOWNLOAD can populate and update the checkpoint.
+      - ${HALOGEN_MODELS:?set HALOGEN_MODELS to the model directory}:/models
       # The prompt cache's disk tier, if HALOGEN_CACHE_DIR is set above:
       # - ${HALOGEN_CACHE:-./halogen-cache}:/cache
     devices:
@@ -123,7 +123,8 @@ services:
     ipc: host
     ulimits:
       memlock: -1
-    group_add: [keep-groups]
+    # Numeric host GIDs avoid image /etc/group name mismatches.
+    group_add: ["44", "991"]
     # THE API MUST NOT START UNTIL THIS ANSWERS. Reading the weights takes
     # minutes, and `depends_on` alone waits only for the container to START.
     # Without this the front-end connects, is refused, and exits at boot:
@@ -165,7 +166,7 @@ services:
       # snapshots are symlinks into a sibling blobs/ that dangle in a container.
       - ${HALOGEN_MODELS:?set HALOGEN_MODELS to the directory hf download wrote}:/models:ro
     ports:
-      - "8731:8731"          # the only published port
+      - "0.0.0.0:8731:8731" # reachable through the internal VPN DNS
     # /health asks the ENGINE for a PONG before it answers, so this is a
     # check on the pair rather than on the front-end's own process. A live
     # front-end in front of a dead engine used to report itself healthy.
