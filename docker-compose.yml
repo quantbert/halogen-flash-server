@@ -29,6 +29,11 @@
 #   docker compose up -d
 #   docker compose restart api          # cheap: no model reload
 #   docker compose logs -f engine       # watch the load, it takes minutes
+#   First start on a new machine: create .env beside this file with
+#     HALOGEN_MODELS=/path/to/models            # writable; populated by HALOGEN_DOWNLOAD
+#     RENDER_GID=$(getent group render | cut -d: -f3)
+#   (VIDEO_GID defaults to 44; override only if `getent group video` differs.)
+#   The first `up` downloads ~118 GiB into HALOGEN_MODELS before the engine loads.
 #
 # BOTH SERVICES MUST RUN THE SAME TAG. The api renders the prompt and the
 # engine runs it, and what one release can do the other may not know how to
@@ -123,8 +128,14 @@ services:
     ipc: host
     ulimits:
       memlock: -1
-    # Numeric host GIDs avoid image /etc/group name mismatches.
-    group_add: ["44", "991"]
+    # Device access is by numeric GID: the container must carry the host's
+    # render GID (owner of /dev/kfd and /dev/dri/renderD128). Names resolve
+    # against the IMAGE's /etc/group, which has no `render` entry, so they
+    # cannot be used here. Set RENDER_GID in .env from the host:
+    #   getent group render | cut -d: -f3
+    # VIDEO_GID defaults to 44 (video on Debian/Ubuntu); override the same
+    # way if this host differs.
+    group_add: ["${VIDEO_GID:-44}", "${RENDER_GID:?set RENDER_GID to the host render GID: getent group render | cut -d: -f3}"]
     # THE API MUST NOT START UNTIL THIS ANSWERS. Reading the weights takes
     # minutes, and `depends_on` alone waits only for the container to START.
     # Without this the front-end connects, is refused, and exits at boot:
